@@ -1,27 +1,32 @@
 import itertools
 import numpy as np
 from functools import partial
-from tot.models import gpt
+from tot.models import gpt, chatgpt
 
 def get_value(task, x, y, n_evaluate_sample, cache_value=True):
-    value_prompt = task.value_prompt_wrap(x, y)
-    if cache_value and value_prompt in task.value_cache:
-        return task.value_cache[value_prompt]
-    value_outputs = gpt(value_prompt, n=n_evaluate_sample, stop=None)
-    value = task.value_outputs_unwrap(x, y, value_outputs)
-    if cache_value:
-        task.value_cache[value_prompt] = value
-    return value
+    # check if task name is dtree
+    if not task.name == 'dtree': # TODO: fix the if else logic and add name to each task
+        value_prompt = task.value_prompt_wrap(x, y)
+        if cache_value and value_prompt in task.value_cache:
+            return task.value_cache[value_prompt]
+        value_outputs = gpt(value_prompt, n=n_evaluate_sample, stop=None)
+        value = task.value_outputs_unwrap(x, y, value_outputs)
+        if cache_value:
+            task.value_cache[value_prompt] = value
+        return value
+    elif task.name == 'dtree':
+        value = task.get_output_entropy(x, y)
+        return value
 
 def get_values(task, x, ys, n_evaluate_sample, cache_value=True):
     values = []
     local_value_cache = {}
     for y in ys:  # each partial output
-        if y in local_value_cache:  # avoid duplicate candidates
+        if ', '.join(y) in local_value_cache:  # avoid duplicate candidates
             value = 0
         else:    
             value = get_value(task, x, y, n_evaluate_sample, cache_value=cache_value)
-            local_value_cache[y] = value
+            local_value_cache[', '.join(y)] = value
         values.append(value)
     return values
 
@@ -37,6 +42,7 @@ def get_proposals(task, x, y):
     return [y + _ + '\n' for _ in proposals]
 
 def get_samples(task, x, y, n_generate_sample, prompt_sample, stop):
+    print('getting samples')
     if prompt_sample == 'standard':
         prompt = task.standard_prompt_wrap(x, y)
     elif prompt_sample == 'cot':
@@ -44,14 +50,16 @@ def get_samples(task, x, y, n_generate_sample, prompt_sample, stop):
     else:
         raise ValueError(f'prompt_sample {prompt_sample} not recognized')
     samples = gpt(prompt, n=n_generate_sample, stop=stop)
-    return [y + _ for _ in samples]
+
+
+    return [y + [s] for s in samples]
 
 def solve(args, task, idx, to_print=True):
     global gpt
     gpt = partial(gpt, model=args.backend, temperature=args.temperature)
     print(gpt)
     x = task.get_input(idx)  # input
-    ys = ['']  # current output candidates
+    ys = [[]]  # current output candidates
     infos = []
     for step in range(task.steps):
         # generation

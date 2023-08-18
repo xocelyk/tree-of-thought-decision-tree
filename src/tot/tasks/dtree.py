@@ -12,12 +12,7 @@ it to split dataframe and calculate entropy. Entropy is the output.
 '''
 
 
-def get_current_numbers(y: str) -> str:
-    last_line = y.strip().split('\n')[-1]
-    return last_line.split('left: ')[-1].split(')')[0]
-
-
-class Game24Task(Task):
+class DTreeTask(Task):
     """
     Input (x)   : a string of 4 numbers
     Output (y)  : a trajectory of 3 steps to reach 24
@@ -30,60 +25,85 @@ class Game24Task(Task):
         6 * 4 = 24 (left: 24)
         (1 + 2 + 3) * 4 = 24
     """
-    def __init__(self, file='housing.csv'):
+    def __init__(self, file='housing.csv', num_train=32):
         """
         file: a csv file (fixed)
         """
+        self.name = 'dtree'
         super().__init__()
         path = os.path.join(DATA_PATH, 'dtree', file)
-        self.data = pd.read_csv(path).reset_index(inplace=True) # changed from list to dataframe
+        self.data = pd.read_csv(path) # changed from list to dataframe
+        self.data.dropna(inplace=True) # TODO: this should probably happen before the class is initialized
+        random_state = 42
+        self.train_data = self.data.sample(num_train, random_state=random_state)
+        self.train_data.index = range(num_train)
+        self.data = self.data.drop(self.train_data.index).reset_index()
+        self.data.index = range(len(self.data))
         self.value_cache = {}
-        self.steps = 4 # decision tree depth
-        self.stops = ['\n'] * 4
+        self.steps = 3 # decision tree depth
+        self.stops = ['\n'] * 3 # TODO: what does this do?
 
     def __len__(self) -> int:
         return len(self.data)
     
     def get_input(self, idx: int) -> str:
-        return self.data[idx]
+        series = self.data.iloc[idx]
+        return series
 
     def test_output(self, idx: int, output: str):
-        # TODO: we want this to return 1 if output matches true label and 0 otherwise
-        expression = output.strip().split('\n')[-1].lower().replace('answer: ', '').split('=')[0]
-        numbers = re.findall(r'\d+', expression)
-        problem_numbers = re.findall(r'\d+', self.data[idx])
-        if sorted(numbers) != sorted(problem_numbers):
-            return {'r': 0}
-        try:
-            # print(sympy.simplify(expression))
-            return {'r': int(sympy.simplify(expression) == 24)}
-        except Exception as e:
-            # print(e)
-            return {'r': 0}
+        candidate_splits = self.parse_splits(output)
+        split_df = self.data[idx].split(candidate_splits)
+        # majority vote over dtree branch
+        majority_label = np.argmax(np.bincount(split_df['label']))
+        # return 1 if majority label is correct, 0 otherwise
+        return {'r': int(majority_label == self.data[idx]['label'])}
         
     def get_output_entropy(self, x: str, y: str) -> float:
         # This is our analog of test_output
-        prev_splits = x.find('Previous Splits: ')[len('Previous Splits: '):]
-        prev_splits = prev_splits.split(', ')
-        prev_splits = [(feat, op, val) for feat, op, val in [split.split(' ') for split in prev_splits]]
-        candidate_split = y.find('Output: ')[len('Output: '):]
-        candidate_split = candidate_split.split(' ')
-        candidate_split = (candidate_split[0], candidate_split[1], candidate_split[2])
-        splits = prev_splits + [candidate_split]
+        splits = self.parse_splits(y)
         entropy = self.evaluate_entropy(splits)
-        return entropy
+        return entropy 
+
+    def parse_splits(self, y: list) -> list:
+        res = []
+        operator_signs = '<= >= < > =='.split(' ')
+        # TODO: fix the splitting logic
+        for candidate_split in y:
+            # separate into feature, operator, value
+            for op in operator_signs:
+                if op in candidate_split:
+                    feat, val = [el.strip() for el in candidate_split.split(op)]
+                    break
+            try:
+                val = float(val)
+            except:
+                raise ValueError(f'Could not parse {candidate_split}')
+            res.append((feat, op, val))
+        return res
 
     def evaluate_entropy(self, splits: list) -> float:
-        # TODO: allow for different eval criteria (gini etc.)
-        split_df = self.split_dataframe(splits)
-        if len(split_df) == 0:
+        # TODO: this calculation needs to change and account for the total information added on both sides
+        # it is not optimal to just split so that we get one side of the data with a single data point and minimum entropy, this is silly!
+        df = self.train_data.copy()
+        
+        df = self.split_dataframe(df, splits)
+        # Calculate the proportions of each label
+        p_plus = df['Label'].mean()
+        p_minus = 1 - p_plus
+
+        # Handle cases where p_plus or p_minus are 0, as log2(0) is undefined
+        if p_plus == 0 or p_minus == 0:
             return 0
-        return -sum(split_df['label'] * split_df['label'].apply(lambda x: np.log(x)) + \
-            (1 - split_df['label']) * split_df['label'].apply(lambda x: np.log(1 - x))) / len(split_df)
+
+        # Calculate entropy
+        entropy = -p_plus * np.log2(p_plus) - p_minus * np.log2(p_minus)
+
+        return -entropy
     
-    def split_dataframe(self, splits: list) -> pd.DataFrame:
-        # TODO: cache df so we do not have to repeat split each time
-        df = pd.DataFrame(self.data)
+    @staticmethod
+    def split_dataframe(df, splits: list) -> pd.DataFrame:
+        print(df.shape)
+        print(splits)
         for feat, op, val in splits:
             if op == '>=':
                 df = df[df[feat] >= val]
@@ -99,10 +119,10 @@ class Game24Task(Task):
                 raise NotImplementedError
         return df
     
-            
-    @staticmethod
-    def standard_prompt_wrap(x: str, y:str='') -> str:
-        return standard_prompt.format(input=x) + y
+    def standard_prompt_wrap(self, x: str, y:str='', prev_splits='') -> str:
+        train_data = self.train_data.copy().to_dict(orient='records')
+        res = standard_prompt(train_data, x, prev_splits) # TODO: where do prev_splits come from?
+        return res
 
     @staticmethod
     def cot_prompt_wrap(x: str, y:str='') -> str:
@@ -113,7 +133,6 @@ class Game24Task(Task):
         current_numbers = get_current_numbers(y if y else x)
         if current_numbers == '24':
             prompt = cot_prompt.format(input=x) + 'Steps:' + y
-            # print([prompt])
         else:
             prompt = propose_prompt.format(input=current_numbers)
         return prompt
@@ -125,7 +144,6 @@ class Game24Task(Task):
         last_line = y.strip().split('\n')[-1]
         if 'left: ' not in last_line:  # last step
             ans = last_line.lower().replace('answer: ', '')
-            # print([value_last_step_prompt.format(input=x, answer=ans)])
             return value_last_step_prompt.format(input=x, answer=ans)
         current_numbers = get_current_numbers(y)
         return value_prompt.format(input=current_numbers)
