@@ -15,7 +15,8 @@ def get_value(task, x, y, n_evaluate_sample, cache_value=True):
             task.value_cache[value_prompt] = value
         return value
     elif task.name == 'dtree':
-        value = task.get_output_entropy(x, y)
+        # n_evaluate_sample does not matter in this case
+        value = task.get_output_info_gain(x, y)
         return value
 
 def get_values(task, x, ys, n_evaluate_sample, cache_value=True):
@@ -41,10 +42,13 @@ def get_proposals(task, x, y):
     proposals = gpt(propose_prompt, n=1, stop=None)[0].split('\n')
     return [y + _ + '\n' for _ in proposals]
 
-def get_samples(task, x, y, n_generate_sample, prompt_sample, stop):
+def get_samples(task, x: dict, y, n_generate_sample, prompt_sample, stop) -> list:
     print('getting samples')
     if prompt_sample == 'standard':
+        # print(x)
         prompt = task.standard_prompt_wrap(x, y)
+        # print(prompt)
+        # assert False
     elif prompt_sample == 'cot':
         prompt = task.cot_prompt_wrap(x, y)
     else:

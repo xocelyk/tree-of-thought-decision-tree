@@ -25,7 +25,7 @@ class DTreeTask(Task):
         6 * 4 = 24 (left: 24)
         (1 + 2 + 3) * 4 = 24
     """
-    def __init__(self, file='housing.csv', num_train=32):
+    def __init__(self, file='housing.csv', num_train=40):
         """
         file: a csv file (fixed)
         """
@@ -48,6 +48,9 @@ class DTreeTask(Task):
     
     def get_input(self, idx: int) -> str:
         series = self.data.iloc[idx]
+        # to dict, don't include idx or label
+        # TODO: might need to recover label in the future for evaluation
+        series = series.drop(['index', 'Label']).to_dict()
         return series
 
     def test_output(self, idx: int, output: str):
@@ -58,10 +61,11 @@ class DTreeTask(Task):
         # return 1 if majority label is correct, 0 otherwise
         return {'r': int(majority_label == self.data[idx]['label'])}
         
-    def get_output_entropy(self, x: str, y: str) -> float:
+    def get_output_info_gain(self, x: str, y: str) -> float:
+        # TODO: need to add some stopping criterion for when we are already at minimum entropy
         # This is our analog of test_output
         splits = self.parse_splits(y)
-        entropy = self.evaluate_entropy(splits)
+        entropy = self.evaluate_info_gain(splits)
         return entropy 
 
     def parse_splits(self, y: list) -> list:
@@ -77,17 +81,41 @@ class DTreeTask(Task):
             try:
                 val = float(val)
             except:
+                # TODO: this is happening too much
+                print(candidate_split, feat, op, val)
                 raise ValueError(f'Could not parse {candidate_split}')
             res.append((feat, op, val))
         return res
 
-    def evaluate_entropy(self, splits: list) -> float:
+    def evaluate_info_gain(self, splits: list) -> float:
         # TODO: this calculation needs to change and account for the total information added on both sides
         # it is not optimal to just split so that we get one side of the data with a single data point and minimum entropy, this is silly!
         df = self.train_data.copy()
-        
-        df = self.split_dataframe(df, splits)
-        # Calculate the proportions of each label
+        if len(splits) == 1:
+            prev_df = df
+        else:
+            prev_splits = splits[:-1]
+            prev_df = self.split_dataframe(df, prev_splits)
+
+        cur_split = [splits[-1]]
+        cur_df_1, cur_df_2 = self.split_dataframe(prev_df, cur_split, two_sided=True)
+        if cur_df_1.empty or cur_df_2.empty:
+            return 0
+        cur_entropy_1 = self.calculate_entropy(cur_df_1)
+        cur_entropy_2 = self.calculate_entropy(cur_df_2)
+        cur_entropy = (cur_entropy_1 * len(cur_df_1) + cur_entropy_2 * len(cur_df_2)) / (len(cur_df_1) + len(cur_df_2))
+        prev_entropy = self.calculate_entropy(prev_df)
+        info_gain = prev_entropy - cur_entropy
+        print(splits, prev_entropy, cur_entropy, info_gain)
+        print('T/F Split on prev df: {}/{}'.format(len(prev_df[prev_df['Label'] == 1]), len(prev_df[prev_df['Label'] == 0])))
+        print('T/F Split on cur df 1: {}/{}'.format(len(cur_df_1[cur_df_1['Label'] == 1]), len(cur_df_1[cur_df_1['Label'] == 0])))
+        print('T/F Split on cur df 2: {}/{}'.format(len(cur_df_2[cur_df_2['Label'] == 1]), len(cur_df_2[cur_df_2['Label'] == 0])))
+        print()
+        return info_gain
+
+
+    @staticmethod
+    def calculate_entropy(df: pd.DataFrame) -> float:
         p_plus = df['Label'].mean()
         p_minus = 1 - p_plus
 
@@ -98,31 +126,32 @@ class DTreeTask(Task):
         # Calculate entropy
         entropy = -p_plus * np.log2(p_plus) - p_minus * np.log2(p_minus)
 
-        return -entropy
+        return entropy
     
     @staticmethod
-    def split_dataframe(df, splits: list) -> pd.DataFrame:
-        print(df.shape)
-        print(splits)
+    def split_dataframe(df, splits: list, two_sided = False) -> pd.DataFrame:
         for feat, op, val in splits:
             if op == '>=':
-                df = df[df[feat] >= val]
+                res = df[df[feat] >= val]
             elif op == '<=':
-                df = df[df[feat] <= val]
+                res = df[df[feat] <= val]
             elif op == '<':
-                df = df[df[feat] < val]
+                res = df[df[feat] < val]
             elif op == '>':
-                df = df[df[feat] > val]
+                res = df[df[feat] > val]
             elif op == '==':
-                df = df[df[feat] == val]
+                res = df[df[feat] == val]
             else:
                 raise NotImplementedError
-        return df
+        if two_sided:
+            return res, df[~df.index.isin(res.index)]
+        else:
+            return res
     
-    def standard_prompt_wrap(self, x: str, y:str='', prev_splits='') -> str:
+    def standard_prompt_wrap(self, x: dict, prev_splits: str='') -> str:
         train_data = self.train_data.copy().to_dict(orient='records')
-        res = standard_prompt(train_data, x, prev_splits) # TODO: where do prev_splits come from?
-        return res
+        prompt = standard_prompt(train_data, x, prev_splits) # TODO: where do prev_splits come from?
+        return prompt
 
     @staticmethod
     def cot_prompt_wrap(x: str, y:str='') -> str:

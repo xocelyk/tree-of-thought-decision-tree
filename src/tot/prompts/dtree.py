@@ -68,7 +68,8 @@ def create_prompt(num_shots, train_data=None, test_data=None, messages=[], train
 
     return messages
 
-def standard_prompt(train_data: list, test_point: dict, prev_splits: list) -> str:
+def standard_prompt(train_data: dict, test_point: dict, prev_splits: list) -> str:
+    #TODO: the test point still has the index and label
     res = 'Suppose you are trying to build a decision tree for classifying whether the median house value for households within a block is greater than $200,000. You have already collected the following data:\n'
     label_name = 'Median Housing Price > $200,000'
     train_data_str = ''
@@ -86,8 +87,7 @@ def standard_prompt(train_data: list, test_point: dict, prev_splits: list) -> st
     res += 'You want to build a decision tree that best classifies a test point. Here is the test point:\n'
     test_point_str = ''
     for feat, val in test_point.items():
-        if feat != label_name:
-            test_point_str += f'{feat}: {val}\n'
+        test_point_str += f'{feat}: {val}\n'
     res += test_point_str
     res += 'To build a decision tree, you need to choose a feature to split on. '
     if len(prev_splits) > 0:
