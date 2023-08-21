@@ -46,12 +46,26 @@ class DTreeTask(Task):
     def __len__(self) -> int:
         return len(self.data)
     
+    def classify(self, ys):
+        votes = []
+        for y in ys:
+            df = self.split_dataframe(self.train_data, self.parse_splits(y))
+            print('{}: {}/{}'.format(y, len(df[df['Label'] == 1]), len(df[df['Label'] == 0])))
+            # majority vote over dtree branch
+            majority_label = np.argmax(np.bincount(df['Label']))
+            votes.append(majority_label)
+        return np.bincount(votes).argmax()
+        
+    
     def get_input(self, idx: int) -> str:
         series = self.data.iloc[idx]
         # to dict, don't include idx or label
         # TODO: might need to recover label in the future for evaluation
         series = series.drop(['index', 'Label']).to_dict()
         return series
+    
+    def get_input_label(self, idx: int) -> str:
+        return self.data.iloc[idx]['Label']
 
     def test_output(self, idx: int, output: str):
         candidate_splits = self.parse_splits(output)
@@ -78,12 +92,12 @@ class DTreeTask(Task):
                 if op in candidate_split:
                     feat, val = [el.strip() for el in candidate_split.split(op)]
                     break
-            try:
-                val = float(val)
-            except:
-                # TODO: this is happening too much
-                print(candidate_split, feat, op, val)
-                raise ValueError(f'Could not parse {candidate_split}')
+            # try:
+            val = float(val)
+            # except:
+            #     # TODO: this is happening too much
+            #     print(candidate_split, feat, op, val)
+            #     raise ValueError(f'Could not parse {candidate_split}')
             res.append((feat, op, val))
         return res
 
@@ -91,27 +105,14 @@ class DTreeTask(Task):
         # TODO: this calculation needs to change and account for the total information added on both sides
         # it is not optimal to just split so that we get one side of the data with a single data point and minimum entropy, this is silly!
         df = self.train_data.copy()
-        if len(splits) == 1:
-            prev_df = df
-        else:
-            prev_splits = splits[:-1]
-            prev_df = self.split_dataframe(df, prev_splits)
-
-        cur_split = [splits[-1]]
-        cur_df_1, cur_df_2 = self.split_dataframe(prev_df, cur_split, two_sided=True)
-        if cur_df_1.empty or cur_df_2.empty:
+        split_df = self.split_dataframe(df, splits)
+        if split_df.empty:
             return 0
-        cur_entropy_1 = self.calculate_entropy(cur_df_1)
-        cur_entropy_2 = self.calculate_entropy(cur_df_2)
-        cur_entropy = (cur_entropy_1 * len(cur_df_1) + cur_entropy_2 * len(cur_df_2)) / (len(cur_df_1) + len(cur_df_2))
-        prev_entropy = self.calculate_entropy(prev_df)
-        info_gain = prev_entropy - cur_entropy
-        print(splits, prev_entropy, cur_entropy, info_gain)
-        print('T/F Split on prev df: {}/{}'.format(len(prev_df[prev_df['Label'] == 1]), len(prev_df[prev_df['Label'] == 0])))
-        print('T/F Split on cur df 1: {}/{}'.format(len(cur_df_1[cur_df_1['Label'] == 1]), len(cur_df_1[cur_df_1['Label'] == 0])))
-        print('T/F Split on cur df 2: {}/{}'.format(len(cur_df_2[cur_df_2['Label'] == 1]), len(cur_df_2[cur_df_2['Label'] == 0])))
+        res = -self.calculate_entropy(split_df) # negative because we want to maximize
+        print(splits, res + 1)
+        print('T/F Split on df: {}/{}'.format(len(split_df[split_df['Label'] == 1]), len(split_df[split_df['Label'] == 0])))
         print()
-        return info_gain
+        return res
 
 
     @staticmethod
@@ -150,7 +151,7 @@ class DTreeTask(Task):
     
     def standard_prompt_wrap(self, x: dict, prev_splits: str='') -> str:
         train_data = self.train_data.copy().to_dict(orient='records')
-        prompt = standard_prompt(train_data, x, prev_splits) # TODO: where do prev_splits come from?
+        prompt = standard_prompt(train_data, x, prev_splits)
         return prompt
 
     @staticmethod

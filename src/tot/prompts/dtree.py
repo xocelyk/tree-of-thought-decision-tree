@@ -97,5 +97,5 @@ def standard_prompt(train_data: dict, test_point: dict, prev_splits: list) -> st
     else:
         res += 'You have not made any splits yet.'
     
-    res += 'Please suggest a new feature to split on. Please phrase your answer as follows: "{feature_name} {operator} {value}". For example, "Median Income > 35000". Be sure that the split you suggest contains the test point. Do not suggest a split you have already tried.'
+    res += 'Please suggest a new feature to split on. You want to choose a split that maximizes information gain. Please phrase your answer as follows: {feature_name} {operator} {value}. The operator can be either < or >. Do not suggest a split you have already tried.'
     return res
