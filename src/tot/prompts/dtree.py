@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 
 STRINGS = {
 "SYSTEM_CONTENT_1": "You are Charlie, an AI housing price expert. You are studying California median housing price data. Your job is to predict whether or not the median house value for households within a block is greater than $200,000. After assessing your predictions, you will be asked to provide a hypothesis between the features in the housing data and the median house value being greater than $200,000. The goal is to generate a hypothesis that will be useful to a future agent performing the same prediction task.",
@@ -12,6 +13,15 @@ STRINGS = {
 "LABEL_1": "(A) The median house value for houses in this block is greater than $200,000.",
 "LABEL_0": "(B) The median house value for houses in this block is less than or equal to $200,000."
 }
+
+def data_dict_to_dataframe_code_string(df):
+    data_dict = {col: df[col].tolist() for col in df.columns}
+
+    # Convert dictionary to a formatted string
+    dict_str = "{" + ", ".join([f"'{k}': {v}" for k, v in data_dict.items()]) + "}"
+
+    # Return the full formatted string
+    return f"pd.DataFrame({dict_str})"
 
 def get_train_ts_label(sample_size, train_data):
     ts_list = []
@@ -68,34 +78,55 @@ def create_prompt(num_shots, train_data=None, test_data=None, messages=[], train
 
     return messages
 
-def standard_prompt(train_data: dict, test_point: dict, prev_splits: list) -> str:
-    #TODO: the test point still has the index and label
-    res = 'Suppose you are trying to build a decision tree for classifying whether the median house value for households within a block is greater than $200,000. You have already collected the following data:\n'
-    label_name = 'Median Housing Price > $200,000'
-    train_data_str = ''
-    for row in train_data:
-        for feat, val in row.items():
-            if feat != label_name:
-                train_data_str += f'{feat}: {val}\n'
-            else:
-                label_val = 'Yes' if val == 1 else 'No'
-                train_data_str += f'{label_name}: {label_val}\n'
-        train_data_str += '#####\n'
-    
-    res += train_data_str
+def standard_prompt(train_data: list, test_point: dict, prev_splits: list) -> str:
+    assert 'Label' not in test_point
+    # turn test point to pandas dataframe
+    test_point = pd.DataFrame(test_point, index=[0])
+    prompt = ('You are in the process of building a decision tree to classify whether the median house value for households in a given block is greater than $200,000. Your job is to add one more split to the decision tree. You will be given three pieces of data to do this:'
+              
+    + '\n'
+    + '\n'
 
-    res += 'You want to build a decision tree that best classifies a test point. Here is the test point:\n'
-    test_point_str = ''
-    for feat, val in test_point.items():
-        test_point_str += f'{feat}: {val}\n'
-    res += test_point_str
-    res += 'To build a decision tree, you need to choose a feature to split on. '
+    + '1. Training data: This will be presented as a pandas dataframe.' + '\n'
+    + '2. Test point: This is the point whose Label you are trying to classify.' + '\n'
+    + '3. Previous splits: You will be told what previous splits have been made on the data on the decision tree branch you are using for classification of the test point.'
+
+    + '\n'
+    + '\n'
+
+    + 'The goal is to create a sequence of data splits which, when applied to the training data, will create a subset of data that is most useful for classification of the test point. Each data split will be phrased as an inequality and select one branch of the decision tree to keep. For example, if the suggested split is Feature 1 < 10, then the training data will be subsetted as df = df[df[Feature 1] < 10]. The dataframe split must contain the test point. For example, if the proposed split is Feature 1 < 10, it must be true that test_point[Feature 1] < 10. Remember, the goal is to create a subset of the training that helps us classify the test point by both selecting similar points and minimizing entropy.'
+
+    + '\n'
+    + '\n'
+
+    + 'Here is the training data:\n'
+
+    + data_dict_to_dataframe_code_string(train_data) + '\n' 
+    + 'Here is the test point:' + '\n'
+    + data_dict_to_dataframe_code_string(test_point) + '\n'
+    + 'YYou will construct a decision tree by iteratively suggesting new splits in the training data, one at a time. Once all splits have been generated, for each split, we will apply the split to the dataframe, and reassign the dataframe to the side of the split that contains the test point. After all splits have been applied, we will be left with a subset of the training data. The test point will be classified as the majority label of this subset of the training data. The goal is to classify the test point correctly.'
+
+    + '\n'
+    + '\n'
+
+    + 'You must suggest a new split of the training data. Your split must be either of the form {feature} > {value} or {feature} < {value}, where feature is a column in the training data and value is the number you want to split on.'
+
+    + '\n'
+    + '\n'
+
+    + 'Your split must satisfy two criteria:\n'
+    + '1. The split must be true of the test point. test_point[{feature}] {inequality sign} {value} must evaluate to True. For example, if test_point[feature_one] > 10, then "feature_one > 5 would be a VALID split, but "feature_one < 9 would be an INVALID split.\n'
+    + '2. You must not suggest a split you have already tried.\n')
     if len(prev_splits) > 0:
-        res += 'You have already made the following splits:\n'
-        for split in prev_splits:
-            res += f'{split}\n'
+        prompt += 'Here are the previous splits you have implemented: {}.'.format(prev_splits)
     else:
-        res += 'You have not made any splits yet.'
+        prompt += 'You have not suggested any previous splits. In other words, this is the first layer in the decision tree, and you are suggesting the root. Your goal is to suggest a split that will best help classify the test point.'
     
-    res += 'Please suggest a new feature to split on. You want to choose a split that maximizes information gain. Please phrase your answer as follows: {feature_name} {operator} {value}. The operator can be either < or >. Do not suggest a split you have already tried.'
-    return res
+    prompt += '\n'
+    prompt += '\n'
+
+    prompt += 'Decide on the split in three steps. First, choose the feature you want to split on. Do not choose an exact value from the test point, but instead base the choice off of the training data. Second, choose the value you want to split on. Third, choose the inequality sign you want to use for the split. The choice of inequality sign should be based on the test point. We want the inequality to point in the direction of the test point.'
+
+    prompt += 'Propose an inequality to split the data. Select a feature and a value. Explain your thinking. Do not try to manually calculate information gain, but instead use your intuition. The last line of your response must be either "Answer: {feature} > {value}" OR "Answer: {feature} < {value}". If you do not follow the answer template, someone will die.'
+    return prompt
+

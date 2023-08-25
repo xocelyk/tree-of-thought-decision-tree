@@ -15,22 +15,27 @@ if api_base != "":
     print("Warning: OPENAI_API_BASE is set to {}".format(api_base))
     openai.api_base = api_base
 
+
 @backoff.on_exception(backoff.expo, openai.error.OpenAIError)
 def completions_with_backoff(**kwargs):
     return openai.ChatCompletion.create(**kwargs)
 
-def gpt(prompt, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop=None) -> list:
+def gpt(prompt, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop=None, func=None) -> list:
     messages = [{"role": "user", "content": prompt}]
-    return chatgpt(messages, model=model, temperature=temperature, max_tokens=max_tokens, n=n, stop=stop)
-    
-def chatgpt(messages, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop=None) -> list:
+    return chatgpt(messages, model=model, temperature=temperature, max_tokens=max_tokens, n=n, stop=stop, func=func)
+  
+def chatgpt(messages, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop=None, func=None) -> list:
     global completion_tokens, prompt_tokens
     outputs = []
     while n > 0:
         cnt = min(n, 20)
         n -= cnt
-        res = completions_with_backoff(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens, n=cnt, stop=stop)
-        outputs.extend([choice["message"]["content"] for choice in res["choices"]])
+        if func:
+            res = completions_with_backoff(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens, n=cnt, stop=stop, functions=[func], function_call='auto')
+            outputs.extend([choice["message"]["function_call"]["arguments"] for choice in res["choices"]])
+        else:
+            res = completions_with_backoff(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens, n=cnt, stop=stop)
+            outputs.extend([choice["message"]["content"] for choice in res["choices"]])
         # log completion tokens
         completion_tokens += res["usage"]["completion_tokens"]
         prompt_tokens += res["usage"]["prompt_tokens"]

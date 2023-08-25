@@ -3,6 +3,30 @@ import numpy as np
 from functools import partial
 from tot.models import gpt, chatgpt
 
+GET_SPLIT_FUNC = {
+        'name': 'extract_data_split',
+        'description': 'Takes a feature, operator, an value, and returns a string representing the inequality',
+        'parameters': {
+            'type': 'object',
+            'properties': {
+                'feature': {
+                    'type': 'string',
+                    'description': 'Feature in the dataframe'
+                },
+                'operator': {
+                    'type': 'string',
+                    'description': 'Inequality operator: <, >, <=, or >='
+                },
+                'value': {
+                    'type': 'number',
+                    'description': 'Value to compare against'
+                }
+            },
+            'required': ['feature', 'operator', 'value'],
+        }
+    }
+    
+
 def get_value(task, x, y, n_evaluate_sample, cache_value=True):
     # check if task name is dtree
     if not task.name == 'dtree': # TODO: fix the if else logic and add name to each task
@@ -42,14 +66,17 @@ def get_proposals(task, x, y):
     proposals = gpt(propose_prompt, n=1, stop=None)[0].split('\n')
     return [y + _ + '\n' for _ in proposals]
 
-def get_samples(task, x: dict, y, n_generate_sample, prompt_sample, stop) -> list:
+def get_samples(task, x: dict, y, n_generate_sample, prompt_sample, stop, func=None) -> list:
     if prompt_sample == 'standard':
         prompt = task.standard_prompt_wrap(x, y)
     elif prompt_sample == 'cot':
         prompt = task.cot_prompt_wrap(x, y)
     else:
         raise ValueError(f'prompt_sample {prompt_sample} not recognized')
+    # samples = gpt(prompt, n=n_generate_sample, stop=stop, func=GET_SPLIT_FUNC)
     samples = gpt(prompt, n=n_generate_sample, stop=stop)
+    samples = task.parse_samples(samples)
+    print('samples: ', samples)
     return [y + [s] for s in samples]
 
 def solve(args, task, idx, to_print=True):
@@ -59,6 +86,7 @@ def solve(args, task, idx, to_print=True):
     print(gpt)
     x = task.get_input(idx)  # input
     print('input: ', x)
+    print()
     ys = [[]]  # current output candidates
     infos = []
     for step in range(task.steps):

@@ -40,8 +40,8 @@ class DTreeTask(Task):
         self.data = self.data.drop(self.train_data.index).reset_index()
         self.data.index = range(len(self.data))
         self.value_cache = {}
-        self.steps = 3 # decision tree depth
-        self.stops = ['\n'] * 3 # TODO: what does this do?
+        self.steps = 2 # decision tree depth
+        self.stops = [None] * 2
 
     def __len__(self) -> int:
         return len(self.data)
@@ -81,24 +81,37 @@ class DTreeTask(Task):
         splits = self.parse_splits(y)
         entropy = self.evaluate_info_gain(splits)
         return entropy 
-
+    
+    @staticmethod
+    def parse_samples(samples):
+        res = []
+        for el in samples:
+            el = el[el.find('Answer: ') + len('Answer: '):].strip()
+            res.append(el)
+        return res
+        
     def parse_splits(self, y: list) -> list:
         res = []
-        operator_signs = '<= >= < > =='.split(' ')
-        # TODO: fix the splitting logic
+        operator_signs = '< > >= <='.split(' ')
         for candidate_split in y:
-            # separate into feature, operator, value
-            for op in operator_signs:
-                if op in candidate_split:
-                    feat, val = [el.strip() for el in candidate_split.split(op)]
-                    break
-            # try:
-            val = float(val)
-            # except:
-            #     # TODO: this is happening too much
-            #     print(candidate_split, feat, op, val)
-            #     raise ValueError(f'Could not parse {candidate_split}')
-            res.append((feat, op, val))
+            try:
+                # separate into feature, operator, value
+                for op in operator_signs:
+                    if op in candidate_split:
+                        feat, val = [el.strip() for el in candidate_split.split(op)]
+                        if "'" in feat:
+                            feat = feat.replace("'", '')
+                        elif '"' in feat:
+                            feat = feat.replace('"', '')
+                        if val[-1] == '.':
+                            val = val[:-1]
+                        break
+                print(feat, op, val)
+                val = float(val)
+
+                res.append((feat, op, val))
+            except:
+                continue
         return res
 
     def evaluate_info_gain(self, splits: list) -> float:
@@ -131,17 +144,18 @@ class DTreeTask(Task):
     
     @staticmethod
     def split_dataframe(df, splits: list, two_sided = False) -> pd.DataFrame:
+        res = df.copy()
         for feat, op, val in splits:
             if op == '>=':
-                res = df[df[feat] >= val]
+                res = res[res[feat] >= val]
             elif op == '<=':
-                res = df[df[feat] <= val]
+                res = res[res[feat] <= val]
             elif op == '<':
-                res = df[df[feat] < val]
+                res = res[res[feat] < val]
             elif op == '>':
-                res = df[df[feat] > val]
+                res = res[res[feat] > val]
             elif op == '==':
-                res = df[df[feat] == val]
+                res = res[res[feat] == val]
             else:
                 raise NotImplementedError
         if two_sided:
@@ -150,7 +164,7 @@ class DTreeTask(Task):
             return res
     
     def standard_prompt_wrap(self, x: dict, prev_splits: str='') -> str:
-        train_data = self.train_data.copy().to_dict(orient='records')
+        train_data = self.train_data.copy()
         prompt = standard_prompt(train_data, x, prev_splits)
         return prompt
 
