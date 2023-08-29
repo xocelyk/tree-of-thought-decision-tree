@@ -78,6 +78,63 @@ def create_prompt(num_shots, train_data=None, test_data=None, messages=[], train
 
     return messages
 
+def ask_for_feature_prompt(feature_list: list, prev_splits: list) -> str:
+    '''
+    Given the list of previous splits and the remaining features, ask the model
+    to choose a new feature to split on.
+    It does not do any quantitative analysis here; we ask it to depend on intuition.
+    '''
+    prompt = ('You are in the process of building a decision tree to classify whether the median house value for households in a given block is greater than $200,000. ')
+    if len(prev_splits) == 0:
+        prompt += 'You have not yet added any splits to the decision tree. Your job is to determine which feature to split on first. '
+    else:
+        prompt += 'The split(s) you have made on the decision tree determine which branch you are on right now. You have already added the following split(s) to the decision tree, in this order: '
+        for split in prev_splits:
+            prompt += split + ', '
+        prompt = prompt[:-2] + '. '
+    
+    prompt += '\n\n'
+    prompt += 'You must choose one of the following features to split on: '
+    for feature in feature_list:
+        prompt += feature + ', '
+    prompt = prompt[:-2] + '. '
+    prompt += '\n\n'
+    prompt += 'Explain your reasoning. Consider which feature you think will be most useful in determining whether the median house value for households in a given block is greater than $200,000. Your response must end with "Answer: {feature}." If you do not follow the answer template, something bad will happen.'
+    return prompt
+
+def ask_for_value_prompt(prompt_df: str, feature: str, test_point: str, prev_splits: list) -> str:
+    '''
+    Slice train_data = train_data[[feature, label]].drop_duplicates()
+    Ask the model to choose a value of the feature to split on.
+    '''
+
+    prompt = ('You are in the process of building a decision tree to classify whether the median house value for households in a given block is greater than $200,000. ')
+    if len(prev_splits) == 0:
+        prompt += 'You have not yet added any splits to the decision tree. Your job is to determine which feature and value to split on first. '
+    else:
+        prompt += 'The split(s) you have made on the decision tree determine which branch you are on right now. You have already added the following split(s) to the decision tree, in this order: '
+        for split in prev_splits:
+            prompt += split + ', '
+        prompt = prompt[:-2] + '. '
+    
+    prompt += '\n\n'
+
+    prompt += 'For the next split, you have chosen to split using the feature ' + feature + '. Your job is to determine which value of ' + feature + ' to split on. To help you make your decision, you are given two pieces of information: '
+    prompt += '\n\n'
+    prompt += f'1. Training data. To simplify the problem you are given only the {feature} and label columns of the training data. It is presented below: '
+    prompt += '\n\n'
+    prompt += prompt_df
+    prompt += '\n\n'
+    prompt += f'2. Test point. The test point you are trying to classify is presented below: '
+    prompt += '\n\n'
+    prompt += test_point
+    prompt += '\n\n'
+    # TODO: shuold I give specific instructions on how it should not choose a value too close to the test point?
+    # Option: exclude the test point from the prompt
+    prompt += 'Choose a value of the feature to split on. Remember that you are trying to classify whether the median house value of the test point is greater than $200,000.  Your response must end with "Answer: {value}." The value must be a float type. If you do not follow the answer template, something bad will happen.'
+    return prompt
+
+
 def standard_prompt(train_data: list, test_point: dict, prev_splits: list) -> str:
     assert 'Label' not in test_point
     # turn test point to pandas dataframe
@@ -94,7 +151,7 @@ def standard_prompt(train_data: list, test_point: dict, prev_splits: list) -> st
     + '\n'
     + '\n'
 
-    + 'The goal is to create a sequence of data splits which, when applied to the training data, will create a subset of data that is most useful for classification of the test point. Each data split will be phrased as an inequality and select one branch of the decision tree to keep. For example, if the suggested split is Feature 1 < 10, then the training data will be subsetted as df = df[df[Feature 1] < 10]. The dataframe split must contain the test point. For example, if the proposed split is Feature 1 < 10, it must be true that test_point[Feature 1] < 10. Remember, the goal is to create a subset of the training that helps us classify the test point by both selecting similar points and minimizing entropy.'
+    + 'The goal is to create a sequence of data splits which, when applied to the training data, will create a subset of data that is most useful for classification of the test point. Each data split will be phrased as an inequality and select one branch of the decision tree to keep. For example, if the suggested split is Feature 1 <= 10, then the training data will be subsetted as df = df[df[Feature 1] <= 10]. The dataframe split must contain the test point. For example, if the proposed split is Feature 1 <= 10, it must be true that test_point[Feature 1] < 10. Remember, the goal is to create a subset of the training that helps us classify the test point by both selecting similar points and minimizing entropy.'
 
     + '\n'
     + '\n'
@@ -109,13 +166,13 @@ def standard_prompt(train_data: list, test_point: dict, prev_splits: list) -> st
     + '\n'
     + '\n'
 
-    + 'You must suggest a new split of the training data. Your split must be either of the form {feature} > {value} or {feature} < {value}, where feature is a column in the training data and value is the number you want to split on.'
+    + 'You must suggest a new split of the training data. Your split must be either of the form {feature} >= {value} or {feature} <= {value}, where feature is a column in the training data and value is the number you want to split on.'
 
     + '\n'
     + '\n'
 
     + 'Your split must satisfy two criteria:\n'
-    + '1. The split must be true of the test point. test_point[{feature}] {inequality sign} {value} must evaluate to True. For example, if test_point[feature_one] > 10, then "feature_one > 5 would be a VALID split, but "feature_one < 9 would be an INVALID split.\n'
+    + '1. The split must be true of the test point. test_point[{feature}] {inequality sign} {value} must evaluate to True. For example, if test_point[feature_one] >= 10, then "feature_one >= 5 would be a VALID split, but "feature_one <= 9 would be an INVALID split.\n'
     + '2. You must not suggest a split you have already tried.\n')
     if len(prev_splits) > 0:
         prompt += 'Here are the previous splits you have implemented: {}.'.format(prev_splits)
@@ -123,10 +180,10 @@ def standard_prompt(train_data: list, test_point: dict, prev_splits: list) -> st
         prompt += 'You have not suggested any previous splits. In other words, this is the first layer in the decision tree, and you are suggesting the root. Your goal is to suggest a split that will best help classify the test point.'
     
     prompt += '\n'
-    prompt += '\n'
+    
 
-    prompt += 'Decide on the split in three steps. First, choose the feature you want to split on. Do not choose an exact value from the test point, but instead base the choice off of the training data. Second, choose the value you want to split on. Third, choose the inequality sign you want to use for the split. The choice of inequality sign should be based on the test point. We want the inequality to point in the direction of the test point.'
+    prompt += 'Decide on the split in three steps. First, choose the feature you want to split on. Second, choose the value you want to split on. Third, choose the inequality sign you want to use for the split. Do not choose an exact value from the test point, but instead base the choice off of the training data. The choice of inequality sign should be based on the test point. We want the inequality to point in the direction of the test point.'
 
-    prompt += 'Propose an inequality to split the data. Select a feature and a value. Explain your thinking. Do not try to manually calculate information gain, but instead use your intuition. The last line of your response must be either "Answer: {feature} > {value}" OR "Answer: {feature} < {value}". If you do not follow the answer template, someone will die.'
+    prompt += 'Propose an inequality to split the data. Select a feature and a value. Explain your thinking. Do not try to manually calculate information gain, but instead use your intuition. The last line of your response must be either "Answer: {feature} >= {value}" OR "Answer: {feature} <= {value}". If you do not follow the answer template, someone will die.'
     return prompt
 

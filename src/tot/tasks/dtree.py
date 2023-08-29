@@ -25,7 +25,7 @@ class DTreeTask(Task):
         6 * 4 = 24 (left: 24)
         (1 + 2 + 3) * 4 = 24
     """
-    def __init__(self, file='housing.csv', num_train=40):
+    def __init__(self, file='housing.csv', num_train=8):
         """
         file: a csv file (fixed)
         """
@@ -55,7 +55,6 @@ class DTreeTask(Task):
             majority_label = np.argmax(np.bincount(df['Label']))
             votes.append(majority_label)
         return np.bincount(votes).argmax()
-        
     
     def get_input(self, idx: int) -> str:
         series = self.data.iloc[idx]
@@ -83,16 +82,63 @@ class DTreeTask(Task):
         return entropy 
     
     @staticmethod
-    def parse_samples(samples):
-        res = []
-        for el in samples:
-            el = el[el.find('Answer: ') + len('Answer: '):].strip()
-            res.append(el)
-        return res
+    def serialize_df(df: pd.DataFrame) -> str:
+        '''
+        string representation for dataframe
+        '''
+        label_description = 'Median House Value > $200,000'
+        label_ans_map = {0: 'No', 1: 'Yes'}
+        res = ''
+        new_row_string = '###'
+        res += new_row_string + '\n'
+        for idx, row in df.iterrows():
+            row_dict = row.to_dict()
+            for key, val in row_dict.items():
+                if key == 'Label':
+                    val = label_ans_map[val]
+                    key = label_description
+                res += '{}: {}\n'.format(key, val) 
+            res += new_row_string + '\n'
+        return res.rstrip()
+    
+    @staticmethod
+    def parse_response(response) -> str:
+        '''
+        Response should end with "Answer: {feature}". May include period and/or quotations.
+        '''
+        # find where "Answer: " is
+        idx = response.find('Answer: ') + len('Answer: ')
+        response = response[idx:].strip()
+        # if quotation marks are used, remove them
+        if response[-1] == '"':
+            response = response[:-1]
+        elif response[-1] == "'":
+            response = response[:-1]
+        # remove period if it is there
+        if response[-1] == '.':
+            response = response[:-1]
+        return response 
+    
+    def parse_feature_response(self, response: str) -> str:
+        '''
+        Response should end with "Answer: {feature}". May include period and/or quotations.
+        '''
+        return self.parse_response(response)
+
+    def parse_value_response(self, response: str) -> str:
+        response = self.parse_response(response)
+        # check for $ and remove it
+        if '$' in response:
+            response = response.replace('$', '')
+        # check for comma and remove it
+        if ',' in response:
+            response = response.replace(',', '')
+        return response
+
         
     def parse_splits(self, y: list) -> list:
         res = []
-        operator_signs = '< > >= <='.split(' ')
+        operator_signs = '>= <= < >'.split(' ')
         for candidate_split in y:
             try:
                 # separate into feature, operator, value
@@ -105,13 +151,15 @@ class DTreeTask(Task):
                             feat = feat.replace('"', '')
                         if val[-1] == '.':
                             val = val[:-1]
+                        if ',' in val:
+                            val = val.replace(',', '')
+                        if '$' in val:
+                            val = val.replace('$', '')
                         break
-                print(feat, op, val)
                 val = float(val)
-
                 res.append((feat, op, val))
             except:
-                continue
+                raise ValueError('Invalid split: {}'.format(candidate_split))
         return res
 
     def evaluate_info_gain(self, splits: list) -> float:
@@ -163,6 +211,36 @@ class DTreeTask(Task):
         else:
             return res
     
+    def ask_for_feature_prompt_wrap(self, prev_splits: str='') -> str:
+        train_data = self.train_data.copy()
+        feature_list = list(train_data.columns)
+        feature_list.remove('Label')
+        train_data = self.serialize_df(train_data)
+        used_features = [el[0] for el in self.parse_splits(prev_splits)]
+        feature_list = [el for el in feature_list if el not in used_features]
+        prompt = ask_for_feature_prompt(feature_list, prev_splits)
+        return prompt
+    
+    def ask_for_value_prompt_wrap(self, feature, test_point, prev_splits: str='') -> str:
+        train_data = (self.train_data.copy())
+        train_data = train_data[[feature, 'Label']]
+        train_data = self.serialize_df(train_data)
+        test_point = self.serialize_df(pd.DataFrame(test_point, index=[0]))
+        prompt = ask_for_value_prompt(train_data, feature, test_point, prev_splits)
+        return prompt
+    
+    @staticmethod
+    def get_inequality_sign(test_point: dict, feature: str, value: float) -> str:
+        '''
+        given the test point, feature, and value, return the inequality sign
+        inequality sign in {<, >=}
+        >= is used if value == test_point[feature]
+        '''
+        if test_point[feature] >= float(value):
+            return '>='
+        else:
+            return '<'
+
     def standard_prompt_wrap(self, x: dict, prev_splits: str='') -> str:
         train_data = self.train_data.copy()
         prompt = standard_prompt(train_data, x, prev_splits)

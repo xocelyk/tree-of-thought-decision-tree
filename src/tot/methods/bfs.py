@@ -66,18 +66,29 @@ def get_proposals(task, x, y):
     proposals = gpt(propose_prompt, n=1, stop=None)[0].split('\n')
     return [y + _ + '\n' for _ in proposals]
 
-def get_samples(task, x: dict, y, n_generate_sample, prompt_sample, stop, func=None) -> list:
-    if prompt_sample == 'standard':
-        prompt = task.standard_prompt_wrap(x, y)
-    elif prompt_sample == 'cot':
-        prompt = task.cot_prompt_wrap(x, y)
-    else:
-        raise ValueError(f'prompt_sample {prompt_sample} not recognized')
-    # samples = gpt(prompt, n=n_generate_sample, stop=stop, func=GET_SPLIT_FUNC)
-    samples = gpt(prompt, n=n_generate_sample, stop=stop)
-    samples = task.parse_samples(samples)
+def get_samples(task, test_point: dict, prev_splits, n_generate_sample, prompt_sample, stop, func=None) -> list:
+    # x is test point
+    # y is previous splits
+    # if prompt_sample == 'standard':
+    #     prompt = task.standard_prompt_wrap(test_point, prev_splits)
+    # elif prompt_sample == 'cot':
+    #     prompt = task.cot_prompt_wrap(test_point, prev_splits)
+    # else:
+    #     raise ValueError(f'prompt_sample {prompt_sample} not recognized')
+    samples = []
+    for i in range(n_generate_sample):
+        feature_prompt = task.ask_for_feature_prompt_wrap(prev_splits)
+        feature = task.parse_feature_response(gpt(feature_prompt, n=1, stop=stop)[0])
+        value_prompt = task.ask_for_value_prompt_wrap(feature, test_point, prev_splits)
+        value = gpt(value_prompt, n=1, stop=stop)[0]
+        print('value: ', value)
+        value = task.parse_value_response(value)
+        inequality_sign = task.get_inequality_sign(test_point, feature, value)
+        candidate = feature + ' ' + inequality_sign + ' ' + str(value)
+        print('candidate: ', candidate)
+        samples.append(candidate)
     print('samples: ', samples)
-    return [y + [s] for s in samples]
+    return [prev_splits + [s] for s in samples]
 
 def solve(args, task, idx, to_print=True):
     # TODO: if leaf is pure, freeze it
